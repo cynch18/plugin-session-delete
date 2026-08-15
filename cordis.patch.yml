@@ -1,0 +1,11 @@
+# dsh-profile-plugin-session-delete bundle patch (used by `dsh plugin add` installs).
+# The install.mjs / install.ps1 paths write the same rows into the profile's own
+# cordis.patch.yml instead — use ONE installation method, not both
+# (installing twice would create duplicate plugin-session-delete rows).
+#
+# session-delete is a pure additive capability: one insert row, no disables.
+# The sidebar slot patch itself is applied at first page load by the plugin's
+# self-healing client (or ahead of time by scripts/patch-workspace-menu.mjs).
+- insert:
+    - id: plugin-session-delete
+      name: dsh-profile-plugin-session-delete
