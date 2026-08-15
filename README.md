@@ -60,10 +60,6 @@ node scripts\patch-workspace-menu.mjs apply    # 重打（幂等）
 - 以 `--host 0.0.0.0` 启动时 API 整体 403 不可用（仅信任回环）
 - 已实证版本：DSH 0.1.0-rc.6；升级后锚点漂移的诊断见 `docs\anchors.md`
 
-## 致谢 Attribution
-
-删除语义与安全围栏的实现模式参考 [Zephyr-vibe/dsh-archived-sessions](https://github.com/Zephyr-vibe/dsh-archived-sessions)（MIT），产品形态（侧边栏交互 + 自愈）为独立设计。
-
 ## License
 
 MIT — © 2026 CYNCH18
