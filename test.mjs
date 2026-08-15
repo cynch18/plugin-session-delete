@@ -6,8 +6,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { createRequire } from "node:module";
-import {
+import { createRequire } from "node:module";import {
   checkPatch,
   applyPatchText,
   stripPatch,
@@ -188,14 +187,16 @@ test("isValidSessionId: accepts harness ids (session-<uuid>), bare uuids, safe c
 });
 
 test("isInsideSessionsRoot: strict-inside fence", () => {
-  const root = "C:\\Users\\x\\.dsh\\sessions";
-  assert.equal(isInsideSessionsRoot(root, root + "\\--proj--\\session-abc"), true);
+  // 平台无关：用 join() 生成路径（Windows 反斜杠 / POSIX 正斜杠都正确）。
+  const root = join("C:", "Users", "x", ".dsh", "sessions");
+  const inside = join(root, "--proj--", "session-abc");
+  assert.equal(isInsideSessionsRoot(root, inside), true);
   assert.equal(isInsideSessionsRoot(root, root), false);
-  assert.equal(isInsideSessionsRoot(root, "C:\\Users\\x\\.dsh"), false);
-  assert.equal(isInsideSessionsRoot(root, "C:\\Users\\x\\.dsh\\other"), false);
+  assert.equal(isInsideSessionsRoot(root, join("C:", "Users", "x", ".dsh")), false);
+  assert.equal(isInsideSessionsRoot(root, join("C:", "Users", "x", ".dsh", "other")), false);
   assert.equal(isInsideSessionsRoot(root, ""), false);
   assert.equal(isInsideSessionsRoot(root, null), false);
-  assert.equal(isInsideSessionsRoot(root, root + "\\..\\sessions2\\s"), false);
+  assert.equal(isInsideSessionsRoot(root, join(root, "..", "sessions2", "s")), false);
 });
 
 test("isTrustedApiRequest: loopback + same-origin fence", () => {
