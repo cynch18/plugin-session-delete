@@ -49,8 +49,8 @@ node scripts\patch-workspace-menu.mjs strip   # 2. 摘除补丁（按标记精�
 # 3. 删除 profiles\web\node_modules\dsh-profile-plugin-session-delete\
 ```
 
-## 参考与许可
+## 许可
 
-删除语义与安全围栏的实现模式参考 [dsh-archived-sessions](https://github.com/Zephyr-vibe/dsh-archived-sessions)（MIT）；产品形态（侧边栏交互 + 自愈）为独立设计。升级后补丁锚点漂移的排查手册见 [docs/anchors.md](docs/anchors.md)。
+升级后补丁锚点漂移的排查手册见 [docs/anchors.md](docs/anchors.md)。
 
 MIT — © 2026 CYNCH18
