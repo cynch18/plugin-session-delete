@@ -39,22 +39,20 @@ $out = & node $patchCli apply 2>&1
 $out | ForEach-Object { Write-Host "  $_" }
 if ($LASTEXITCODE -ne 0) { throw "patch apply failed" }
 
-# 3) cordis.patch.yml 注册条目（幂等行级手术）
+# 3) cordis.patch.yml 注册条目（幂等；通用锚点：插在顶层 `- insert:` 之后）
 if (-not (Test-Path $patchYml)) { throw "cordis.patch.yml not found: $patchYml" }
 $content = Get-Content $patchYml -Raw
-$entry = "    - id: plugin-session-delete`r`n      name: dsh-profile-plugin-session-delete`r`n      disabled: false"
+$eol = if ($content -match "`r`n") { "`r`n" } else { "`n" }
+$entry = "    - id: plugin-session-delete$eol      name: dsh-profile-plugin-session-delete$eol      disabled: false"
 if ($content -match "(?m)^\s*- id:\s*plugin-session-delete\s*$") {
   Write-Host "  cordis.patch.yml: entry already present"
 } else {
-  if (-not ($content -match "(?m)^\s*- insert:\s*$")) {
-    throw "cordis.patch.yml has no top-level `"- insert:`" list; add the entry manually"
-  }
-  $content = $content -replace "(\r?\n)(\s*- id:\s*plugin-switch[^\r\n]*\r?\n[^\r\n]*\r?\n[^\r\n]*)", "`$1`$2`r`n$entry"
-  if ($content -match "(?m)^\s*- id:\s*plugin-session-delete\s*$") {
+  if ($content -match "(?m)^- insert:") {
+    $content = $content -replace "(?m)^(- insert:[^\r\n]*)$", "`$1$eol$entry"
     Set-Content -Path $patchYml -Value $content -NoNewline -Encoding utf8
     Write-Host "  cordis.patch.yml: entry added"
   } else {
-    Write-Host "  cordis.patch.yml: auto-insert anchor not found; add manually:"
+    Write-Host "  cordis.patch.yml: no top-level `"- insert:`" list; add manually:"
     Write-Host $entry
   }
 }

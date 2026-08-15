@@ -1,6 +1,6 @@
 {
   "name": "dsh-profile-plugin-session-delete",
-  "version": "0.0.1-probe",
+  "version": "0.1.0",
   "description": "DSH web plugin: native sidebar batch-delete for sessions (header button + row checkboxes) with self-healing slot patch.",
   "type": "module",
   "license": "MIT",

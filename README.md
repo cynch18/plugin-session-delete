@@ -10,13 +10,15 @@ DSH 的会话只有三种命运：重命名、分叉、归档。归档只是把�
 
 ## 30 秒装上
 
-```powershell
-powershell -ExecutionPolicy Bypass -File scripts\install.ps1
+```bash
+node scripts/install.mjs   # 跨平台（Windows / macOS / Linux）
 ```
 
 重启 dsh → 刷新页面。工作区标题栏（搜索框那一行）左侧多出一个 **🗑**。
 
-不想用脚本？手动三步：把本包复制到 `%USERPROFILE%\.dsh\profiles\web\node_modules\dsh-profile-plugin-session-delete\`，运行 `node scripts\patch-workspace-menu.mjs apply`，再在 `profiles\web\cordis.patch.yml` 的 insert 列表加一条 `- id: plugin-session-delete`（`name: dsh-profile-plugin-session-delete`）。
+安装器做三件事：把包复制进 `profiles\web\node_modules`、给侧边栏打补丁（幂等）、在 `cordis.patch.yml` 注册条目（幂等）。Windows 上也可用 `powershell -ExecutionPolicy Bypass -File scripts\install.ps1`，效果相同。
+
+> 注意：`dsh plugin --profile web add <本仓库>` 只相当于 pnpm 装包，**不会**注册 `cordis.patch.yml` 条目、也不打补丁——装完插件不会加载。所以首选上面的安装器。
 
 ## 怎么用
 
@@ -51,6 +53,6 @@ node scripts\patch-workspace-menu.mjs strip   # 2. 摘除补丁（按标记精�
 
 ## 许可
 
-升级后补丁锚点漂移的排查手册见 [docs/anchors.md](docs/anchors.md)。
+删除语义的实现模式参考了 [dsh-archived-sessions](https://github.com/Zephyr-vibe/dsh-archived-sessions)（MIT）。升级后补丁锚点漂移的排查手册见 [docs/anchors.md](docs/anchors.md)。
 
 MIT — © 2026 CYNCH18
