@@ -1,5 +1,8 @@
 # 🗑 plugin-session-delete
 
+[![Release](https://img.shields.io/github/v/release/cynch18/plugin-session-delete)](https://github.com/cynch18/plugin-session-delete/releases)
+[![Test](https://img.shields.io/github/actions/workflow/status/cynch18/plugin-session-delete/test.yml)](https://github.com/cynch18/plugin-session-delete/actions)
+
 > Fills the one gap DeepSeek Harness left open: **deleting sessions** — not from a buried settings page, but **right where you see them, in the sidebar**.
 
 ## Why it exists

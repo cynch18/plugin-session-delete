@@ -1,5 +1,8 @@
 # 🗑 plugin-session-delete
 
+[![Release](https://img.shields.io/github/v/release/cynch18/plugin-session-delete)](https://github.com/cynch18/plugin-session-delete/releases)
+[![Test](https://img.shields.io/github/actions/workflow/status/cynch18/plugin-session-delete/test.yml)](https://github.com/cynch18/plugin-session-delete/actions)
+
 > 给 DeepSeek Harness 补上「删除会话」——不是藏在设置里的清单页，而是**侧边栏里顺手一勾**。
 
 ## 为什么会有它
