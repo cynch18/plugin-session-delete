@@ -255,7 +255,8 @@ window.__ModuleLoader__.load({
           await afterDelete(ids);
           const ok = results.filter((r) => r.ok).length;
           const fail = results.length - ok;
-          if (fail > 0) showToast(t("deletePartial", { ok, fail }));
+          const firstFail = results.find((r) => !r.ok);
+          if (fail > 0) showToast(t("deletePartial", { ok, fail }) + (firstFail && firstFail.error ? "：" + firstFail.error : ""));
           else showToast(t("deleteDone", { ok }));
           setSelectMode(false);
         } catch (error) {

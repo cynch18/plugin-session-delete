@@ -161,14 +161,21 @@ test("headerActions max-width widened to fit the third button (text-level regres
 
 // ── host 纯函数 ─────────────────────────────────────────────────────────────
 
-test("isValidSessionId: accepts UUID-shaped ids, rejects garbage", () => {
+test("isValidSessionId: accepts harness ids (session-<uuid>), bare uuids, safe custom ids; rejects unsafe", () => {
+  // 真实格式：dsh-host-apiproxy 铸造 `session-${randomUUID()}`
+  assert.equal(isValidSessionId("session-ea3e0f52-4c7e-4d10-94df-b4e65be1bcce"), true);
   assert.equal(isValidSessionId("d0bf3c76-b59e-46a7-9912-ed98ded5d861"), true);
   assert.equal(isValidSessionId("D0BF3C76-B59E-46A7-9912-ED98DED5D861"), true);
-  assert.equal(isValidSessionId("not-a-uuid"), false);
+  assert.equal(isValidSessionId("not-a-uuid"), true); // 安全字符集自定义 id 也放行
   assert.equal(isValidSessionId(""), false);
   assert.equal(isValidSessionId(123), false);
   assert.equal(isValidSessionId(null), false);
   assert.equal(isValidSessionId("x".repeat(201)), false);
+  assert.equal(isValidSessionId("a/b"), false);
+  assert.equal(isValidSessionId("a\\b"), false);
+  assert.equal(isValidSessionId(".."), false);
+  assert.equal(isValidSessionId("a b"), false);
+  assert.equal(isValidSessionId("a:b"), false);
 });
 
 test("isInsideSessionsRoot: strict-inside fence", () => {

@@ -54,11 +54,16 @@ export function isInsideSessionsRoot(root, dir) {
   return true;
 }
 
-/** 会话 id 形状校验（UUID 形状 + 限长）。 */
+/**
+ * 会话 id 校验：安全字符集（ASCII 字母数字与 . _ ~ -）+ 限长。
+ * 本 Harness 的 id 格式为 `session-<uuid>`（dsh-host-apiproxy 铸造），
+ * 同时兼容裸 UUID 与自定义安全 id；排除路径分隔符/空白/控制字符，
+ * 防止其进入 locate/dirname 等路径拼接路径。
+ */
 export function isValidSessionId(id) {
   if (typeof id !== "string") return false;
   if (id.length === 0 || id.length > 200) return false;
-  return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id);
+  return /^[A-Za-z0-9_~-]{1,200}$/.test(id);
 }
 
 /** 定位会话 header（live 优先，其次 persistence.list()）。 */
