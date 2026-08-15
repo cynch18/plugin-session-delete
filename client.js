@@ -20,6 +20,30 @@ window.__ModuleLoader__.load({
     const NS = "sessionDelete";
     const inject = ["slots", "sessions", "workspaces", "locale"];
 
+    // ── 线性垃圾桶图标（与 Harness 原生图标同风格：描边 + currentColor）──
+    function TrashIcon(props) {
+      const size = props && props.size !== undefined ? props.size : 16;
+      return e(
+        "svg",
+        {
+          width: size,
+          height: size,
+          viewBox: "0 0 24 24",
+          fill: "none",
+          stroke: "currentColor",
+          strokeWidth: 1.6,
+          strokeLinecap: "round",
+          strokeLinejoin: "round",
+          "aria-hidden": "true",
+        },
+        e("path", { d: "M3 6h18" }),
+        e("path", { d: "M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6" }),
+        e("path", { d: "M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" }),
+        e("path", { d: "M10 11v6" }),
+        e("path", { d: "M14 11v6" }),
+      );
+    }
+
     // ── 模块级服务句柄 ─────────────────────────────────────────────────────
     let sessionsService = null;
 
@@ -315,8 +339,8 @@ window.__ModuleLoader__.load({
             title: sel.mode === "selecting" ? t("clearSel") : t("menuDelete"),
             onClick: () => setSelectMode(sel.mode !== "selecting"),
           },
-          "🗑",
-          sel.mode === "selecting" ? e("span", { className: "sd-hbtn-count" }, String(sel.count)) : null,
+          e(TrashIcon, { size: 16 }),
+          sel.mode === "selecting" ? e("span", { className: "sd-dot" }) : null,
         ),
         bar,
         confirm
@@ -381,6 +405,7 @@ window.__ModuleLoader__.load({
           {
             id: "delete",
             label: t("menuDelete"),
+            icon: e(TrashIcon, { size: 16 }),
             danger: true,
             disabled: (node) => node.running === true || node.id === current,
           },
@@ -674,10 +699,10 @@ window.__ModuleLoader__.load({
 
     // ── 样式 ───────────────────────────────────────────────────────────────
     const CSS = [
-      ".sd-hbtn{box-sizing:border-box;display:inline-flex;align-items:center;justify-content:center;gap:2px;width:28px;height:28px;border:1px solid var(--dsw-alias-border-l2);border-radius:8px;background:transparent;color:var(--dsw-alias-label-secondary);padding:0;font-size:13px;line-height:18px;cursor:pointer;flex:none}",
+      ".sd-hbtn{box-sizing:border-box;position:relative;display:inline-flex;align-items:center;justify-content:center;width:28px;height:28px;border:none;border-radius:50%;background:transparent;color:var(--dsw-alias-label-secondary);padding:0;cursor:pointer;flex:none;transition:background .15s var(--ds-ease-in-out),color .15s var(--ds-ease-in-out)}",
       ".sd-hbtn:hover{background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-primary)}",
-      ".sd-hbtn-on{border-color:var(--dsw-accent-strong);color:var(--dsw-accent-strong)}",
-      ".sd-hbtn-count{font-size:11px;line-height:14px;font-variant-numeric:tabular-nums}",
+      ".sd-hbtn-on{background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-accent-strong)}",
+      ".sd-dot{position:absolute;top:2px;right:2px;width:7px;height:7px;border-radius:50%;background:var(--dsw-accent-strong);border:1.5px solid var(--dsw-alias-bg-layer-1);pointer-events:none}",
       ".sd-hbtn-label{white-space:nowrap}",
       ".sd-bar{position:fixed;left:12px;bottom:12px;z-index:1000;display:flex;align-items:center;gap:6px;background:var(--dsw-alias-bg-layer-1);border:1px solid var(--dsw-alias-border-l2);border-radius:10px;padding:6px 8px;box-shadow:0 4px 16px rgba(0,0,0,.18)}",
       ".sd-barbtn{box-sizing:border-box;border:1px solid var(--dsw-alias-border-l2);border-radius:6px;background:transparent;color:var(--dsw-alias-label-primary);padding:2px 10px;font-size:12px;line-height:18px;cursor:pointer}",
