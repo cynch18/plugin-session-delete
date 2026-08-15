@@ -1,69 +1,56 @@
-# plugin-session-delete
+# 🗑 plugin-session-delete
 
-一个 DSH Web 插件：在**侧边栏原生交互**中批量删除会话——标题栏删除按钮 + 行首勾选框，路径最短、手速最快。补丁丢失时**自动检测、自动修复、用户无感**。
+> 给 DeepSeek Harness 补上「删除会话」——不是藏在设置里的清单页，而是**侧边栏里顺手一勾**。
 
-A DSH web plugin: batch-delete sessions **natively in the sidebar** — a delete button in the header row plus per-row checkboxes. If the slot patch is lost, the plugin **detects and repairs it silently** — the user never notices.
+## 为什么会有它
 
-## 功能 Features
+DSH 的会话只有三种命运：重命名、分叉、归档。归档只是把会话藏起来，文件还躺在硬盘上；想真正删掉，要么手动去翻 `.dsh` 目录，要么装一个"设置里的会话管理器"——每次都要点开设置、找到面板、再勾选。
 
-- 工作区标题栏（搜索/视图选项所在行）左侧新增 **🗑 删除按钮**；点击进入**选择模式**
-- 每个会话行左侧出现**勾选框**：多选、全选（自动排除运行中与当前会话）、标题栏实时徽标计数
-- 底部浮动操作条：全选 / 清空 / **删除所选 (n)** → 确认弹窗 → 批量删除（20 个一批串行、逐条回报）
-- 会话行「…」菜单新增**「删除会话」**单项（红色危险样式；运行中/当前会话禁用）
-- 删除语义：永久删除（记录文件 + 工作区记账 + 归档集一并清除）；**不级联**（子代理/分叉保留）；运行中会话服务端拒绝（409）
-- **真·自愈**：页面加载自动检测补丁 → 丢失则自动重打 → 成功无感刷新；自动修复失败才在侧边栏底部显示 ⚠ 徽标 + 设置面板横幅（手动重试）
-- 设置 → **删除会话**面板（兜底入口，补丁失效时功能完整可用）：搜索 + 勾选列表 + 批量删除，可看到并删除已归档会话
-- zh / en 双语；API 仅信任本机回环请求
+删会话这种事，就该发生在**看到会话的地方**。所以有了这个插件：不改变你的使用习惯，只是在标题栏加一个 🗑，让删除变成顺手的事。
 
-## 安装 Install
-
-### 方式一：脚本（推荐）
+## 30 秒装上
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File scripts\install.ps1
 ```
 
-### 方式二：手动
+重启 dsh → 刷新页面。工作区标题栏（搜索框那一行）左侧多出一个 **🗑**。
 
-1. 复制本包到 `%USERPROFILE%\.dsh\profiles\web\node_modules\dsh-profile-plugin-session-delete\`；
-2. 打补丁：`node scripts\patch-workspace-menu.mjs apply`；
-3. 在 `profiles\web\cordis.patch.yml` 的 `- insert:` 列表追加：
+不想用脚本？手动三步：把本包复制到 `%USERPROFILE%\.dsh\profiles\web\node_modules\dsh-profile-plugin-session-delete\`，运行 `node scripts\patch-workspace-menu.mjs apply`，再在 `profiles\web\cordis.patch.yml` 的 insert 列表加一条 `- id: plugin-session-delete`（`name: dsh-profile-plugin-session-delete`）。
 
-```yaml
-    - id: plugin-session-delete
-      name: dsh-profile-plugin-session-delete
-      disabled: false
-```
+## 怎么用
 
-4. **重启 dsh**（host 半加载需要重启；client 半刷新页面即可）；
-5. 刷新页面 → 标题栏出现 🗑 按钮。
+1. 点 **🗑** 进入选择模式——每个会话行左边出现勾选框；
+2. 勾上想删的（可以全选，运行中和当前会话会自动排除）；
+3. 点左下角**删除所选 (n)** → 确认 → 完事。
 
-## 升级后 DSH upgrade
+单个删除也留着老习惯：会话行「…」菜单里多了一项红色的**删除会话**。
 
-无需任何操作。升级会覆盖补丁文件，但页面加载时插件会**自动检测 → 自动重打 → 无感刷新**。若自动修复失败（权限/文件占用/新版代码结构大变），侧边栏底部出现 ⚠ 按钮，点击重试；或手动运行：
+删除是**永久**的：日志文件、工作区记账、归档状态一并清掉，且有确认弹窗明说"不可恢复"。但它不越界——子代理、分叉、产出的文件都保留，除非你显式勾选它们。
+
+## 升级之后，什么都没发生
+
+这个插件需要给侧边栏"开三个槽"（一次小补丁）。你可能担心：DSH 一升级，补丁不就没了？
+
+对，补丁会被覆盖。**但你不会知道这件事。** 页面加载时插件自己发现、自己重打、自己刷新——你看到的始终是那个 🗑。只有自动修复也失败时（权限不足、文件被占用、新版结构大改），侧边栏底部才会冒出一个 ⚠ 提醒你。这就是它和"设置面板型"插件的分野：那些插件卖"零补丁的稳"，这个卖"手速 + 永远不用操心"。
+
+## 底线
+
+- 补丁万一失效，**设置 → 删除会话** 面板依然完整可用，还能看到并删除已归档的会话；
+- 运行中的会话服务端直接拒绝（409），当前会话界面上禁用；
+- API 只信任本机回环请求；`--host 0.0.0.0` 启动时自动 403；
+- 已在 DSH **0.1.0-rc.6** 实测通过（含"模拟升级 → 自动修复"演练）。
+
+## 卸载
 
 ```powershell
-node scripts\patch-workspace-menu.mjs verify   # 逐区诊断锚点
-node scripts\patch-workspace-menu.mjs apply    # 重打（幂等）
+# 1. 删掉 cordis.patch.yml 里的 plugin-session-delete 条目
+node scripts\patch-workspace-menu.mjs strip   # 2. 摘除补丁（按标记精确移除，升级过会自动跳过）
+# 3. 删除 profiles\web\node_modules\dsh-profile-plugin-session-delete\
 ```
 
-## 卸载 Uninstall
+## 参考与许可
 
-1. 删除 `cordis.patch.yml` 中的 `plugin-session-delete` 条目；
-2. 运行 `node scripts\patch-workspace-menu.mjs strip`（按标记外科式摘除补丁，与版本解耦；升级过则自动跳过）；
-3. 删除 `profiles\web\node_modules\dsh-profile-plugin-session-delete\` 目录。
-
-## 限制 Limitations
-
-- 运行中 / 当前打开的会话不可删除（先停止或切换）；本机进程可经回环 API 删除当前会话（与官方行为一致）
-- 选择模式下点击行本身仍会打开会话（行点击属 Harness 代码）——请点左侧勾选框
-- 以 `--host 0.0.0.0` 启动时 API 整体 403 不可用（仅信任回环）
-- 已实证版本：DSH 0.1.0-rc.6；升级后锚点漂移的诊断见 `docs\anchors.md`
-
-## 致谢 Attribution
-
-删除语义与安全围栏的实现模式参考 [Zephyr-vibe/dsh-archived-sessions](https://github.com/Zephyr-vibe/dsh-archived-sessions)（MIT），产品形态（侧边栏交互 + 自愈）为独立设计。
-
-## License
+删除语义与安全围栏的实现模式参考 [dsh-archived-sessions](https://github.com/Zephyr-vibe/dsh-archived-sessions)（MIT）；产品形态（侧边栏交互 + 自愈）为独立设计。升级后补丁锚点漂移的排查手册见 [docs/anchors.md](docs/anchors.md)。
 
 MIT — © 2026 CYNCH18
