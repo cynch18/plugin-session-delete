@@ -14,14 +14,14 @@ Deleting a session should happen **where you see the session**. So this plugin a
 ## Install in 30 seconds
 
 ```bash
-node scripts/install.mjs   # cross-platform (Windows / macOS / Linux)
+npx @deepseek-ai/dsh plugin --profile web add github:cynch18/plugin-session-delete
 ```
 
-Restart dsh → refresh the page. A **🗑** button appears on the left of the workspace header row (the one with search / view options).
+Restart dsh → refresh the page. A **🗑** button appears on the left of the workspace header row.
 
-The installer does three things: copies the package into `profiles\web\node_modules`, patches the sidebar (idempotent), and registers the entry in `cordis.patch.yml` (idempotent). On Windows, `powershell -ExecutionPolicy Bypass -File scripts\install.ps1` does the same.
+**No patch scripts needed**: on first page load the plugin detects a missing sidebar patch, applies it, and reloads — the self-heal doubles as the installer. Verified end-to-end on a fresh profile: install → restart → plugin in the boot graph → patch in place, with just that one command.
 
-> Note: `dsh plugin --profile web add <this repo>` only runs pnpm install — it neither registers the `cordis.patch.yml` entry nor applies the patch, so the plugin never loads. Use the installer above.
+> Alternative (offline / scripted): `node scripts/install.mjs` (cross-platform; copies, patches, and registers in one pass), or `install.ps1` on Windows. Pick **one** method — installing twice would create duplicate entries.
 
 ## How to use
 

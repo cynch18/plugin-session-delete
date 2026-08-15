@@ -14,14 +14,14 @@ DSH 的会话只有三种命运：重命名、分叉、归档。归档只是把�
 ## 30 秒装上
 
 ```bash
-node scripts/install.mjs   # 跨平台（Windows / macOS / Linux）
+npx @deepseek-ai/dsh plugin --profile web add github:cynch18/plugin-session-delete
 ```
 
 重启 dsh → 刷新页面。工作区标题栏（搜索框那一行）左侧多出一个 **🗑**。
 
-安装器做三件事：把包复制进 `profiles\web\node_modules`、给侧边栏打补丁（幂等）、在 `cordis.patch.yml` 注册条目（幂等）。Windows 上也可用 `powershell -ExecutionPolicy Bypass -File scripts\install.ps1`，效果相同。
+**不需要跑任何补丁脚本**：侧边栏补丁会在页面首次加载时自动检测、自动补上、自动刷新——自愈机制兼职安装器。已在全新 profile 上实测全链路：安装 → 重启 → 插件进入 boot 图 → 补丁就位，全程只有上面这一条命令。
 
-> 注意：`dsh plugin --profile web add <本仓库>` 只相当于 pnpm 装包，**不会**注册 `cordis.patch.yml` 条目、也不打补丁——装完插件不会加载。所以首选上面的安装器。
+> 备选方式（离线 / 脚本流）：`node scripts/install.mjs`（跨平台，拷贝 + 打补丁 + 注册一步到位）或 Windows 上的 `install.ps1`。两种方式**选其一**即可，重复安装会产生重复条目。
 
 ## 怎么用
 
