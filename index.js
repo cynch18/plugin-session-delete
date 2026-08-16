@@ -181,6 +181,25 @@ function enqueueMutation(operation) {
   return result;
 }
 
+// ── 删除后的归档集推导（纯函数，供单测）────────────────────────────────────
+/**
+ * rc.6 幽灵会话修复的核心推导：
+ * - 清扫孤儿：仅保留"内存或磁盘仍存在"的归档 id（历史残渣顺带收走）；
+ * - 幽灵斗篷：被删会话若仍存在于内存（rc.6 无驱逐原语），加入归档集 =
+ *   官方"任何地方不渲染"语义，未分组桶不再出现幽灵；重启后内存重建、
+ *   existing 不再含它，下次删除触发清扫时自然收走。
+ * @param {string[]} currentArchived 现归档集
+ * @param {string} sessionId 本次删除的会话 id
+ * @param {Set<string>|Iterable<string>} existingIds 内存 ∪ 磁盘仍存在的会话 id
+ * @returns {string[]} 下一状态归档集
+ */
+export function nextArchivedSet(currentArchived, sessionId, existingIds) {
+  const existing = existingIds instanceof Set ? existingIds : new Set(existingIds ?? []);
+  const kept = (currentArchived ?? []).filter((id) => existing.has(id));
+  if (existing.has(sessionId) && !kept.includes(sessionId)) kept.push(sessionId);
+  return kept;
+}
+
 // ── 删除单个会话 ───────────────────────────────────────────────────────────
 /**
  * 只删自己、不级联：detach 工作区记账 → 清归档集（顺带清理孤儿条目）→
@@ -206,17 +225,23 @@ async function deleteSessionSingle(ctx, sessionId) {
       console.error(`[plugin-session-delete] detachSession failed for workspace "${ws.path}":`, error);
     }
   }
-  // 2) 归档集：串行队列内读-改-写，并顺带清理孤儿归档条目。
+  // 2) 归档集：串行队列内读-改-写。
+  // rc.6 无内存驱逐原语（disposeAgent/persistence.remove 均缺），被删会话的内存条目
+  // 会残留到重启；detachSession 又已把它踢出工作区 → 前端 Ungrouped 桶判定命中，
+  // 渲染成"未分组的幽灵会话"。归档集是官方"任何地方不渲染"的隐藏开关：
+  // 删除后把它【加入】归档集（隐形斗篷），内存幽灵立即不可见；重启后内存从磁盘
+  // 重建、幽灵消失，下次任意删除触发清扫时把这个"内存+磁盘都不存在"的 id 收走。
+  // 官方未来提供 persistence.remove 时，existing 计算自然不再含它，自动退化兼容。
   if (registry !== undefined && typeof registry.requireState === "function" && typeof registry.setState === "function") {
     await enqueueMutation(async () => {
       const state = registry.requireState();
-      if (!state.archivedSessionIds.includes(sessionId)) return;
       const existing = new Set();
       for (const session of sessions?.list() ?? []) existing.add(session.id);
       if (persistence !== undefined && typeof persistence.list === "function") {
         for (const h of await persistence.list()) existing.add(h.id);
       }
-      const archivedSessionIds = state.archivedSessionIds.filter((id) => id !== sessionId && existing.has(id));
+      // 只清"内存+磁盘都不存在"的孤儿；被删会话若仍在内存 → 保留在归档集 = 隐藏。
+      const archivedSessionIds = nextArchivedSet(state.archivedSessionIds, sessionId, existing);
       await registry.setState({ ...state, archivedSessionIds });
     });
   }
