@@ -202,13 +202,26 @@ export function nextArchivedSet(currentArchived, sessionId, existingIds) {
 
 // ── 删除单个会话 ───────────────────────────────────────────────────────────
 /**
- * 只删自己、不级联：detach 工作区记账 → 清归档集（顺带清理孤儿条目）→
- * 物理删除会话记录目录（路径围栏内）。运行中检查由调用方先行。
+ * 会话 id 的双拼写变体：raw uuid 与 `session-` 前缀形式。
+ * 不同存储可能持有任一拼写（projcache/工作区旧行），清理时全部覆盖。
+ */
+export function sessionIdVariants(sessionId) {
+  if (typeof sessionId !== "string" || sessionId.length === 0) return [sessionId];
+  const variants = new Set([sessionId]);
+  if (sessionId.startsWith("session-")) variants.add(sessionId.slice("session-".length));
+  else variants.add(`session-${sessionId}`);
+  return [...variants];
+}
+
+/**
+ * 只删自己、不级联：detach 工作区记账 → 物理删除记录目录 → 清投影缓存 →
+ * 清归档集（真删除清扫 / 残留斗篷兜底）。运行中检查由调用方先行。
  */
 async function deleteSessionSingle(ctx, sessionId) {
   const registry = ctx.get("workspaceRegistry");
   const persistence = ctx.get("sessionPersistence");
   const sessions = ctx.get("sessions");
+  const variants = sessionIdVariants(sessionId);
   const meta = await findSessionMeta(ctx, sessionId);
   if (meta === undefined) {
     const error = new Error("找不到该会话的记录（会话不存在）");
@@ -217,12 +230,15 @@ async function deleteSessionSingle(ctx, sessionId) {
     throw error;
   }
   // 1) 工作区记账：best-effort，单个 workspace 失败不阻塞整体删除。
+  //    覆盖两种 id 拼写（旧行可能持任一形式；非成员的 detach 是 no-op）。
   for (const ws of registry?.list() ?? []) {
-    if (!ws.sessionIds.includes(sessionId)) continue;
-    try {
-      await ws.detachSession(sessionId);
-    } catch (error) {
-      console.error(`[plugin-session-delete] detachSession failed for workspace "${ws.path}":`, error);
+    for (const variant of variants) {
+      if (!ws.sessionIds.includes(variant)) continue;
+      try {
+        await ws.detachSession(variant);
+      } catch (error) {
+        console.error(`[plugin-session-delete] detachSession failed for workspace "${ws.path}":`, error);
+      }
     }
   }
   // 2) 物理删除：persistence.remove（新版）→ locate + 围栏 rm（当前版本）。
@@ -259,8 +275,24 @@ async function deleteSessionSingle(ctx, sessionId) {
       }
     }
   }
-  // 3) 归档集：串行队列内读-改-写。existing = 内存 + 磁盘；刚删除的会话若已从两者
+  // 3) 投影缓存清理（best-effort）：残留行会让会话在重启后从缓存"复活"。
+  //    用 storageDomain.get 拿到已打开的域（与投影缓存服务同一实例，
+  //    周期性 flush 不会再把陈旧行写回）。覆盖两种 id 拼写。
+  try {
+    const storageDomain = ctx.get("storageDomain");
+    const proj = storageDomain?.get?.("session_projcache");
+    const projTable = proj?.table?.("sessions");
+    if (projTable !== undefined && typeof projTable.get === "function" && typeof projTable.delete === "function") {
+      for (const variant of variants) {
+        if (projTable.get(variant) !== undefined) await projTable.delete(variant);
+      }
+    }
+  } catch (error) {
+    console.warn(`[plugin-session-delete] projcache cleanup skipped for ${sessionId}:`, error instanceof Error ? error.message : String(error));
+  }
+  // 4) 归档集：串行队列内读-改-写。existing = 内存 + 磁盘；刚删除的会话若已从两者
   // 消失 → 清扫（移出归档集）；若仍残留内存（dispose 失败）→ 斗篷（保留在归档集隐藏）。
+  // 顺带剔除另一种拼写的陈旧归档条目（不碰主拼写，避免拆掉斗篷）。
   if (registry !== undefined && typeof registry.requireState === "function" && typeof registry.setState === "function") {
     await enqueueMutation(async () => {
       const state = registry.requireState();
@@ -269,7 +301,8 @@ async function deleteSessionSingle(ctx, sessionId) {
       if (persistence !== undefined && typeof persistence.list === "function") {
         for (const h of await persistence.list()) existing.add(h.id);
       }
-      const archivedSessionIds = nextArchivedSet(state.archivedSessionIds, sessionId, existing);
+      const variantSet = new Set(variants);
+      const archivedSessionIds = nextArchivedSet(state.archivedSessionIds, sessionId, existing).filter((id) => id === sessionId || !variantSet.has(id));
       await registry.setState({ ...state, archivedSessionIds });
     });
   }

@@ -16,6 +16,7 @@ import {
   isValidSessionId,
   isInsideSessionsRoot,
   isTrustedApiRequest,
+  sessionIdVariants,
 } from "./index.js";
 import { registerPatchEntry } from "./scripts/install.mjs";
 
@@ -169,6 +170,15 @@ test("stripPatch/checkPatch: synthetic roundtrip without live file (CI-safe)", (
 });
 
 // ── host 纯函数 ─────────────────────────────────────────────────────────────
+
+test("sessionIdVariants: both spellings, deduped, safe on garbage", () => {
+  const id = "ea3e0f52-4c7e-4d10-94df-b4e65be1bcce";
+  assert.deepEqual(sessionIdVariants(`session-${id}`), [`session-${id}`, id]);
+  assert.deepEqual(sessionIdVariants(id), [id, `session-${id}`]);
+  assert.deepEqual(sessionIdVariants(""), [""]);
+  assert.deepEqual(sessionIdVariants(null), [null]);
+  assert.equal(new Set(sessionIdVariants("session-session-x")).size, 2);
+});
 
 test("isValidSessionId: accepts harness ids (session-<uuid>), bare uuids, safe custom ids; rejects unsafe", () => {
   assert.equal(isValidSessionId("session-ea3e0f52-4c7e-4d10-94df-b4e65be1bcce"), true);
