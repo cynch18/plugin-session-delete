@@ -225,13 +225,42 @@ async function deleteSessionSingle(ctx, sessionId) {
       console.error(`[plugin-session-delete] detachSession failed for workspace "${ws.path}":`, error);
     }
   }
-  // 2) 归档集：串行队列内读-改-写。
-  // rc.6 无内存驱逐原语（disposeAgent/persistence.remove 均缺），被删会话的内存条目
-  // 会残留到重启；detachSession 又已把它踢出工作区 → 前端 Ungrouped 桶判定命中，
-  // 渲染成"未分组的幽灵会话"。归档集是官方"任何地方不渲染"的隐藏开关：
-  // 删除后把它【加入】归档集（隐形斗篷），内存幽灵立即不可见；重启后内存从磁盘
-  // 重建、幽灵消失，下次任意删除触发清扫时把这个"内存+磁盘都不存在"的 id 收走。
-  // 官方未来提供 persistence.remove 时，existing 计算自然不再含它，自动退化兼容。
+  // 2) 物理删除：persistence.remove（新版）→ locate + 围栏 rm（当前版本）。
+  // 先删文件再清理归档集：真删除后 existing 不含该 id → nextArchivedSet 清扫分支
+  // 会把它从归档集收走；仅当会话仍残留内存（dispose 失败）时才走"隐形斗篷"隐藏。
+  let fileRemoved = false;
+  if (persistence !== undefined && typeof persistence.remove === "function") {
+    await persistence.remove(sessionId);
+    fileRemoved = true;
+  } else if (persistence !== undefined && typeof persistence.locate === "function") {
+    const location = persistence.locate(meta);
+    if (location === undefined || typeof location.path !== "string") {
+      console.warn(`[plugin-session-delete] persistence.locate returned no path for ${sessionId}; file not removed`);
+    } else {
+      const dir = dirname(location.path);
+      const root = sessionsRoot();
+      if (!isInsideSessionsRoot(root, dir)) {
+        const error = new Error("拒绝删除：会话记录目录不在会话根目录内");
+        error.status = 403;
+        error.code = "outside-sessions-root";
+        throw error;
+      }
+      await rm(dir, { recursive: true, force: true });
+      fileRemoved = true;
+      // 顺手清理变空的 project 目录（best-effort，失败忽略）。
+      try {
+        const project = dirname(dir);
+        if (isInsideSessionsRoot(root, project)) {
+          const entries = await readdir(project);
+          if (entries.length === 0) await rm(project, { recursive: false, force: true });
+        }
+      } catch {
+        // ignore
+      }
+    }
+  }
+  // 3) 归档集：串行队列内读-改-写。existing = 内存 + 磁盘；刚删除的会话若已从两者
+  // 消失 → 清扫（移出归档集）；若仍残留内存（dispose 失败）→ 斗篷（保留在归档集隐藏）。
   if (registry !== undefined && typeof registry.requireState === "function" && typeof registry.setState === "function") {
     await enqueueMutation(async () => {
       const state = registry.requireState();
@@ -240,42 +269,11 @@ async function deleteSessionSingle(ctx, sessionId) {
       if (persistence !== undefined && typeof persistence.list === "function") {
         for (const h of await persistence.list()) existing.add(h.id);
       }
-      // 只清"内存+磁盘都不存在"的孤儿；被删会话若仍在内存 → 保留在归档集 = 隐藏。
       const archivedSessionIds = nextArchivedSet(state.archivedSessionIds, sessionId, existing);
       await registry.setState({ ...state, archivedSessionIds });
     });
   }
-  // 3) 物理删除：persistence.remove（新版）→ locate + 围栏 rm（当前版本）。
-  if (persistence !== undefined && typeof persistence.remove === "function") {
-    await persistence.remove(sessionId);
-  } else if (persistence !== undefined && typeof persistence.locate === "function") {
-    const location = persistence.locate(meta);
-    if (location === undefined || typeof location.path !== "string") {
-      // 后端能 locate 但没给出路径：不做静默成功——记录告警并如实标记文件未删。
-      console.warn(`[plugin-session-delete] persistence.locate returned no path for ${sessionId}; file not removed`);
-      return { sessionId, fileRemoved: false };
-    }
-    const dir = dirname(location.path);
-    const root = sessionsRoot();
-    if (!isInsideSessionsRoot(root, dir)) {
-      const error = new Error("拒绝删除：会话记录目录不在会话根目录内");
-      error.status = 403;
-      error.code = "outside-sessions-root";
-      throw error;
-    }
-    await rm(dir, { recursive: true, force: true });
-    // 顺手清理变空的 project 目录（best-effort，失败忽略）。
-    try {
-      const project = dirname(dir);
-      if (isInsideSessionsRoot(root, project)) {
-        const entries = await readdir(project);
-        if (entries.length === 0) await rm(project, { recursive: false, force: true });
-      }
-    } catch {
-      // ignore
-    }
-  }
-  return { sessionId };
+  return fileRemoved ? { sessionId } : { sessionId, fileRemoved: false };
 }
 
 /** 永久删除一个会话：运行中 409 拦截 → flush + disposeAgent 探测 → 单删。 */
@@ -303,7 +301,32 @@ async function deleteSession(ctx, sessionId) {
       try {
         await loop.disposeAgent(sessionId);
       } catch {
-        // dispose 失败不阻塞（rc.6 无此原语，静默跳过）
+        // dispose 失败不阻塞
+      }
+    } else {
+      // rc.6 无 agentLoop.disposeAgent 公开原语：改用与 harness 自身 teardown
+      // 完全相同的 store 原语（agent-loop 的 dispose() 内部就是 detachAgent +
+      // detachSession）。先 detach agent 触发 agent/disposed，再 detach session
+      // 触发 session/disposed → apiproxy 广播 host/session-removed → 客户端即时移除。
+      // 仅对非运行（已 409 拦截）、非 announcing/appending 的会话执行；失败静默，
+      // 兜底仍由 nextArchivedSet 的"隐形斗篷"隐藏残留内存幽灵。
+      try {
+        const agentStore = ctx.get("agents");
+        const agentEntry = agentStore?.store?.get(sessionId);
+        if (agentEntry !== undefined && !agentEntry.announcing && typeof agentStore.detachEntered === "function") {
+          agentStore.detachEntered(agentEntry);
+        }
+      } catch {
+        // best-effort
+      }
+      try {
+        const sessionStore = ctx.get("sessions");
+        const sessionEntry = sessionStore?.store?.get(sessionId);
+        if (sessionEntry !== undefined && !sessionEntry.announcing && !sessionEntry.appending && typeof sessionStore.detachEntered === "function") {
+          sessionStore.detachEntered(sessionEntry);
+        }
+      } catch {
+        // best-effort
       }
     }
   }
