@@ -55,7 +55,7 @@ export function isInsideSessionsRoot(root, dir) {
 }
 
 /**
- * 会话 id 校验：安全字符集（ASCII 字母数字与 . _ ~ -）+ 限长。
+ * 会话 id 校验：安全字符集（ASCII 字母数字与 `_ ~ -`）+ 限长。
  * 本 Harness 的 id 格式为 `session-<uuid>`（dsh-host-apiproxy 铸造），
  * 同时兼容裸 UUID 与自定义安全 id；排除路径分隔符/空白/控制字符，
  * 防止其进入 locate/dirname 等路径拼接路径。
@@ -250,26 +250,29 @@ async function deleteSessionSingle(ctx, sessionId) {
     await persistence.remove(sessionId);
   } else if (persistence !== undefined && typeof persistence.locate === "function") {
     const location = persistence.locate(meta);
-    if (location !== undefined && typeof location.path === "string") {
-      const dir = dirname(location.path);
-      const root = sessionsRoot();
-      if (!isInsideSessionsRoot(root, dir)) {
-        const error = new Error("拒绝删除：会话记录目录不在会话根目录内");
-        error.status = 403;
-        error.code = "outside-sessions-root";
-        throw error;
+    if (location === undefined || typeof location.path !== "string") {
+      // 后端能 locate 但没给出路径：不做静默成功——记录告警并如实标记文件未删。
+      console.warn(`[plugin-session-delete] persistence.locate returned no path for ${sessionId}; file not removed`);
+      return { sessionId, fileRemoved: false };
+    }
+    const dir = dirname(location.path);
+    const root = sessionsRoot();
+    if (!isInsideSessionsRoot(root, dir)) {
+      const error = new Error("拒绝删除：会话记录目录不在会话根目录内");
+      error.status = 403;
+      error.code = "outside-sessions-root";
+      throw error;
+    }
+    await rm(dir, { recursive: true, force: true });
+    // 顺手清理变空的 project 目录（best-effort，失败忽略）。
+    try {
+      const project = dirname(dir);
+      if (isInsideSessionsRoot(root, project)) {
+        const entries = await readdir(project);
+        if (entries.length === 0) await rm(project, { recursive: false, force: true });
       }
-      await rm(dir, { recursive: true, force: true });
-      // 顺手清理变空的 project 目录（best-effort，失败忽略）。
-      try {
-        const project = dirname(dir);
-        if (isInsideSessionsRoot(root, project)) {
-          const entries = await readdir(project);
-          if (entries.length === 0) await rm(project, { recursive: false, force: true });
-        }
-      } catch {
-        // ignore
-      }
+    } catch {
+      // ignore
     }
   }
   return { sessionId };
