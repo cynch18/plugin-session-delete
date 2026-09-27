@@ -84,6 +84,8 @@ function declareOfficialTree(core) {
 const NPX_ROOT = "C:/Users/cynsg/AppData/Local/npm-cache/_npx/1e7f6d9597241db0/node_modules";
 const SLOTS_ENTRY = `${NPX_ROOT}/@deepseek-ai/dsh-client-ui-slots/lib/index.js`;
 const hasNpxSlots = existsSync(SLOTS_ENTRY);
+/** 真实 SlotCore 只在本机 DSH 安装树上可用；CI 上依赖它的用例整体跳过。 */
+const skipSlotCore = hasNpxSlots ? false : "dsh-client-ui-slots unavailable (CI)";
 
 // ── 1) legacy 标记摘除器 ────────────────────────────────────────────────────
 
@@ -475,14 +477,20 @@ function fakeReact() {
 /**
  * 组装 apply 用的 fake ctx（真实 SlotCore + 假 sessions/locale），返回 ctx 与观测点。
  * 客户端契约测试与"设置导航换图标"测试共用，避免夹具漂移。
+ *
+ * SlotCore 只存在于本机 DSH 安装树里，CI 上没有（`SLOTS_ENTRY` 是绝对路径）。
+ * 所以这里必须能优雅降级：拿不到真实 SlotCore 时用记录型替身，
+ * 让不依赖注册语义的用例（如换图标）在 CI 上照常跑。
  */
 function makeApplyContext() {
-  const requireEsm = createRequire(import.meta.url);
-  const { SlotCore } = requireEsm(SLOTS_ENTRY);
-  const core = new SlotCore();
-  const officialDisposers = declareOfficialTree(core);
+  const core = loadSlotCore();
+  const officialDisposers = core === null ? [] : declareOfficialTree(core);
+  const registered = [];
   const slots = {
-    register: (options, component) => core.register(options, component),
+    register: (options, component) => {
+      registered.push({ options, component });
+      return core === null ? () => {} : core.register(options, component);
+    },
     inject: (key, callback) => {
       const disposers = callback();
       return () => {
@@ -516,10 +524,39 @@ function makeApplyContext() {
       bind: (ns) => (key) => locales.find((entry) => entry.ns === ns)?.dicts?.zh?.[key] ?? key,
     },
   };
-  return { ctx, core, locales, officialDisposers };
+  return { ctx, core, locales, officialDisposers, registered };
 }
 
-test("client: 只注册官方原生槽，且每个注册项都带 id/order/locale", () => {
+/** 本机 DSH 安装树里是否存在 SlotCore（CI 上没有）。 */
+function loadSlotCore() {
+  if (!existsSync(SLOTS_ENTRY)) return null;
+  try {
+    const { SlotCore } = createRequire(import.meta.url)(SLOTS_ENTRY);
+    return typeof SlotCore === "function" ? new SlotCore() : null;
+  } catch {
+    return null;
+  }
+}
+
+test("client: 只注册官方原生槽（不依赖 SlotCore，CI 上也跑）", () => {
+  const React = fakeReact();
+  const { result } = loadClientModule({ React });
+  const { ctx, registered } = makeApplyContext();
+  result.apply(ctx);
+  const slots = [...new Set(registered.map((entry) => entry.options.name))].sort();
+  assert.deepEqual(slots, [
+    "settings.section",
+    "shell.overlay",
+    "sidebar.footer.action",
+    "sidebar.workspaces.session.menu.item",
+  ]);
+  for (const entry of registered) {
+    assert.ok(typeof entry.options.id === "string" && entry.options.id.length > 0, "每个注册项都需要 id");
+    assert.equal(typeof entry.component, "function", "每个注册项都需要组件");
+  }
+});
+
+test("client: 只注册官方原生槽，且每个注册项都带 id/order/locale", { skip: skipSlotCore }, () => {
   const React = fakeReact();
   const { spec, result } = loadClientModule({ React });
   assert.equal(spec.id, "dsh-profile-plugin-session-delete", "loader id 必须与包名一致");
