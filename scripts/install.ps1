@@ -1,5 +1,6 @@
 # install.ps1 — dsh-profile-plugin-session-delete 一键安装（幂等）。
-# 步骤：复制包 → 打补丁（幂等）→ cordis.patch.yml 注册条目（幂等）→ 提示重启。
+# 步骤：复制包 → 只读体检旧补丁残留 → cordis.patch.yml 注册条目（幂等）→ 提示重启。
+# 不再对 Harness 的 client bundle 做任何改写。
 param(
   [string]$DshHome = ""
 )
@@ -33,11 +34,14 @@ New-Item -ItemType Directory -Force -Path (Join-Path $pkgDir "scripts") | Out-Nu
 Copy-Item (Join-Path $src "scripts\patch-workspace-menu.mjs") (Join-Path $pkgDir "scripts") -Force
 Write-Host "  copied package files"
 
-# 2) 打补丁（幂等；锚点不匹配会明确报错，不写坏文件）
+# 2) 只读体检：旧版补丁是否还残留在 bundle 上（不再自动改写任何文件）
 $patchCli = Join-Path $pkgDir "scripts\patch-workspace-menu.mjs"
-$out = & node $patchCli apply 2>&1
+$out = & node $patchCli verify 2>&1
 $out | ForEach-Object { Write-Host "  $_" }
-if ($LASTEXITCODE -ne 0) { throw "patch apply failed" }
+if ($LASTEXITCODE -ne 0) {
+  Write-Warning "bundle 上检测到旧版补丁残留（或标记成对性缺陷）。"
+  Write-Host "  本插件不再使用它；建议摘除：node `"$patchCli`" strip"
+}
 
 # 3) cordis.patch.yml 注册条目（幂等；通用锚点：插在顶层 `- insert:` 之后）
 if (-not (Test-Path $patchYml)) { throw "cordis.patch.yml not found: $patchYml" }
@@ -59,4 +63,4 @@ if ($content -match "(?m)^\s*- id:\s*plugin-session-delete\s*$") {
 
 Write-Host "== done =="
 Write-Host "  1) 重启 dsh（host 半加载需要重启）；"
-Write-Host "  2) 刷新页面，标题栏应出现 [垃圾桶] 删除按钮。"
+Write-Host "  2) 刷新页面；会话行「…」菜单里应出现「删除会话」与「批量删除会话…」。"

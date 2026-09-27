@@ -1,10 +1,16 @@
 {
   "name": "dsh-profile-plugin-session-delete",
-  "version": "0.1.1",
-  "description": "DSH web plugin: native sidebar batch-delete for sessions (header button + row checkboxes) with self-healing slot patch.",
+  "version": "0.2.0",
+  "description": "DSH web plugin: delete sessions from the sidebar's native session menu, plus a batch picker in a shell overlay. No bundle patching.",
   "type": "module",
   "license": "MIT",
   "main": "index.js",
+  "scripts": {
+    "test": "node --test test.mjs test-ghost.mjs",
+    "check:client": "node scripts/check-client.mjs",
+    "patch:verify": "node scripts/patch-workspace-menu.mjs verify",
+    "patch:strip": "node scripts/patch-workspace-menu.mjs strip"
+  },
   "exports": {
     ".": "./index.js",
     "./client": "./client.js",
@@ -17,12 +23,12 @@
     "client": {
       "platform": "web",
       "inject": [
-        "@deepseek-ai/dsh-api-remotes",
-        "@deepseek-ai/dsh-client-runtime",
-        "@deepseek-ai/dsh-client-ui-settings",
-        "@deepseek-ai/dsh-client-locale"
+        "@deepseek-ai/dsh-client-locale",
+        "@deepseek-ai/dsh-client-ui-slots",
+        "@deepseek-ai/dsh-client-ui-workspace"
       ]
-    }
+    },
+    "manifestVersion": 1
   },
   "keywords": ["dsh-plugin", "dsh", "session", "delete"]
 }

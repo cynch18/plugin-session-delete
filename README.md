@@ -3,13 +3,27 @@
 [![Release](https://img.shields.io/github/v/release/cynch18/plugin-session-delete)](https://github.com/cynch18/plugin-session-delete/releases)
 [![Test](https://img.shields.io/github/actions/workflow/status/cynch18/plugin-session-delete/test.yml)](https://github.com/cynch18/plugin-session-delete/actions)
 
-> 给 DeepSeek Harness 补上「删除会话」——不是藏在设置里的清单页，而是**侧边栏里顺手一勾**。
+> 给 DeepSeek Harness 补上「删除会话」——不是藏在设置里的清单页，而是**会话行「…」菜单里顺手一项**，外加一个全屏批量面板。
 
 ## 为什么会有它
 
 DSH 的会话只有三种命运：重命名、分叉、归档。归档只是把会话藏起来，文件还躺在硬盘上；想真正删掉，要么手动去翻 `.dsh` 目录，要么装一个"设置里的会话管理器"——每次都要点开设置、找到面板、再勾选。
 
-删会话这种事，就该发生在**看到会话的地方**。所以有了这个插件：不改变你的使用习惯，只是在标题栏加一个 🗑，让删除变成顺手的事。
+删会话这种事，就该发生在**看到会话的地方**。
+
+## 它做什么（0.2.0：零补丁架构）
+
+三个落点**全部是 DSH 官方声明的原生槽**，靠 `ctx.slots.inject()` 注册，本插件不写入任何 Harness 文件：
+
+| 位置 | 原生槽 | 内容 |
+|---|---|---|
+| 会话行「…」菜单 | `sidebar.workspaces.session.menu.item` | 红色**删除会话**（order 500，排在官方 Archive 400 之后）+ **批量删除会话…**（510） |
+| 全局浮层 | `shell.overlay` | 永久删除确认框 + 批量选择面板 |
+| 设置页 | `settings.section` | 同一套批量面板 |
+
+批量面板列出**全部**会话（含已归档），带搜索、全选、运行中/当前会话自动锁定、逐条结果回报。
+
+> **升级不会再把你卡住。** 旧版（≤ 0.1.1）需要对 `dsh-client-ui-workspace` 的打包文件做文本手术，锚点强绑定上游 JSX 结构，且目标文件是 npx 缓存里的全局共享副本——上游一换版本就有概率留下半截补丁，配合"自动打补丁 + 自动刷新"的自愈环，表现为白屏或无限刷新。0.2.0 把这些**全部删掉了**：不写文件、不自动刷新、不重打补丁。
 
 ## 30 秒装上
 
@@ -17,45 +31,45 @@ DSH 的会话只有三种命运：重命名、分叉、归档。归档只是把�
 npx @deepseek-ai/dsh plugin --profile web add github:cynch18/plugin-session-delete
 ```
 
-重启 dsh → 刷新页面。工作区标题栏（搜索框那一行）左侧多出一个 **🗑**。
+重启 dsh → 刷新页面。会话行「…」里多出「删除会话」与「批量删除会话…」。
 
-**不需要跑任何补丁脚本**：侧边栏补丁会在页面首次加载时自动检测、自动补上、自动刷新——自愈机制兼职安装器。已在全新 profile 上实测全链路：安装 → 重启 → 插件进入 boot 图 → 补丁就位，全程只有上面这一条命令。
-
-> 备选方式（离线 / 脚本流）：`node scripts/install.mjs`（跨平台，拷贝 + 打补丁 + 注册一步到位）或 Windows 上的 `install.ps1`。两种方式**选其一**即可，重复安装会产生重复条目。
+> 备选方式（离线 / 脚本流）：`node scripts/install.mjs`（跨平台）或 Windows 上的 `install.ps1`。两种方式**选其一**即可，重复安装会产生重复条目。
 
 ## 怎么用
 
-1. 点 **🗑** 进入选择模式——每个会话行左边出现勾选框；
-2. 勾上想删的（可以全选，运行中和当前会话会自动排除）；
-3. 点左下角**删除所选 (n)** → 确认 → 完事。
+1. **单删**：会话行「…」→ 红色**删除会话** → 确认框写明"不可恢复"；
+2. **批量**：会话行「…」→ **批量删除会话…**（或设置 → 删除会话）→ 勾选 → **删除所选 (n)** → 确认。
 
-单个删除也留着老习惯：会话行「…」菜单里多了一项红色的**删除会话**。
-
-删除是**永久**的：日志文件、投影缓存、工作区记账、归档状态一并清掉，且有确认弹窗明说"不可恢复"。但它不越界——子代理、分叉、产出的文件都保留，除非你显式勾选它们。
-
-## 升级之后，什么都没发生
-
-这个插件需要给侧边栏"开三个槽"（一次小补丁）。你可能担心：DSH 一升级，补丁不就没了？
-
-对，补丁会被覆盖。**但你不会知道这件事。** 页面加载时插件自己发现、自己重打、自己刷新——你看到的始终是那个 🗑。只有自动修复也失败时（权限不足、文件被占用、新版结构大改），侧边栏底部才会冒出一个 ⚠ 提醒你。这就是它和"设置面板型"插件的分野：那些插件卖"零补丁的稳"，这个卖"手速 + 永远不用操心"。
+删除是**永久**的：日志文件、投影缓存、工作区记账、归档状态一并清掉。但它不越界——子代理、分叉、产出的文件都保留，除非你显式勾选它们。
 
 ## 底线
 
-- 补丁万一失效，**设置 → 删除会话** 面板依然完整可用，还能看到并删除已归档的会话；
-- 运行中的会话服务端直接拒绝（409），当前会话界面上禁用；
-- API 只信任本机回环请求；`--host 0.0.0.0` 启动时自动 403；
-- 已在 DSH **0.1.0-rc.6** 实测通过（含"模拟升级 → 自动修复"演练）。
+- 运行中的会话服务端直接拒绝（409）；当前打开的会话在界面上禁用；
+- API 只信任本机回环 Host（`--host 0.0.0.0` 启动时一律 403），跨站请求与异源 Origin 一并拒绝；
+- 删除路径全部走"会话库根目录围栏 + 会话 id 字符集校验"，不接受任何路径拼接输入；
+- 已在 DSH **0.1.7-rc.2** 上核对过槽位声明表（`sidebar.workspaces.session.menu.item` 等）。
+
+## 升级之后
+
+不再需要任何补救动作。若你从 0.1.x 升上来，bundle 上可能残留旧补丁标记：
+侧边栏底部会出现 ⚠ 徽标，设置页面板里也会提示。摘除：
+
+```bash
+node scripts/patch-workspace-menu.mjs strip
+```
+
+详见 [docs/legacy-patch.md](docs/legacy-patch.md)。
 
 ## 卸载
 
-```powershell
-# 1. 删掉 cordis.patch.yml 里的 plugin-session-delete 条目
-node scripts\patch-workspace-menu.mjs strip   # 2. 摘除补丁（按标记精确移除，升级过会自动跳过）
-# 3. 删除 profiles\web\node_modules\dsh-profile-plugin-session-delete\
+```bash
+# 1. 从 profile 的 cordis.patch.yml 里删掉 plugin-session-delete 条目
+# 2. 删除 profiles\web\node_modules\dsh-profile-plugin-session-delete\
+# 3. （仅当从 0.1.x 升级而来）node scripts/patch-workspace-menu.mjs strip
 ```
 
-## 许可
+## License
 
-删除语义的实现模式参考了 [dsh-archived-sessions](https://github.com/Zephyr-vibe/dsh-archived-sessions)（MIT）。升级后补丁锚点漂移的排查手册见 [docs/anchors.md](docs/anchors.md)。
+删除语义参考 [dsh-archived-sessions](https://github.com/Zephyr-vibe/dsh-archived-sessions)（MIT）的实现模式，产品形态自研。
 
 MIT — © 2026 CYNCH18

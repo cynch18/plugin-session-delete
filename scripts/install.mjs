@@ -1,17 +1,11 @@
 // install.mjs — 跨平台一键安装（Windows / macOS / Linux）。
-// 步骤：复制包文件 → 打补丁（幂等）→ cordis.patch.yml 注册条目（幂等，通用锚点）。
+// 步骤：复制包文件 → cordis.patch.yml 注册条目（幂等，通用锚点）。
+// 不再对 Harness 的 client bundle 做任何改写；仅检查并报告旧版补丁残留。
 // 用法：node scripts/install.mjs
 import { copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import {
-  applyPatchText,
-  checkPatch,
-  defaultTarget,
-  dshHome,
-  readTarget,
-  writeTargetAtomic,
-} from "./patch-workspace-menu.mjs";
+import { defaultTarget, dshHome, patchState, readTarget } from "./patch-workspace-menu.mjs";
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const ENTRY_ID = "plugin-session-delete";
@@ -70,23 +64,19 @@ function main() {
   }
   console.log("  copied package files");
 
-  // 2) 打补丁（幂等；锚点不匹配会明确报错，不写坏文件）
+  // 2) 只读体检：旧版补丁是否还残留在 bundle 上（不再自动改写任何文件）
   const target = defaultTarget();
   const content = readTarget(target);
   if (content === null) {
-    console.error(`  patch target not found: ${target}`);
-    process.exit(1);
-  }
-  if (checkPatch(content)) {
-    console.log("  patch: already applied");
+    console.warn(`  bundle not found (skipped diagnostics): ${target}`);
   } else {
-    const { content: next, applied } = applyPatchText(content);
-    if (!applied) {
-      console.error("  patch apply produced no change");
-      process.exit(1);
+    const state = patchState(content);
+    if (state.stale) {
+      console.warn(`  旧版补丁残留：${state.detail}`);
+      console.warn(`  本插件不再使用它；建议摘除：node scripts/patch-workspace-menu.mjs strip`);
+    } else {
+      console.log("  bundle: clean (无旧补丁残留)");
     }
-    writeTargetAtomic(target, next);
-    console.log("  patch: applied");
   }
 
   // 3) cordis.patch.yml 注册条目
@@ -107,7 +97,7 @@ function main() {
 
   console.log("== done ==");
   console.log("  1) 重启 dsh（host 半加载需要重启）；");
-  console.log("  2) 刷新页面，标题栏应出现 🗑 删除按钮。");
+  console.log("  2) 刷新页面；会话行「…」菜单里应出现「删除会话」与「批量删除会话…」。");
 }
 
 // 仅在作为主模块执行时运行；被 import（test.mjs）时零副作用。

@@ -1,24 +1,19 @@
 // dsh-profile-plugin-session-delete — host half.
 //
-// 提供 /session-delete/api/{delete,status,apply-patch}：
-//   delete      永久删除单个会话（官方 API 组合：detachSession + requireState/setState
-//               + locate/rm；路径围栏 + 回环围栏 + 运行中 409）
-//   status      补丁状态自检（patched + fileHash + 逐区锚点报告）
-//   apply-patch 自动重打补丁（幂等；锚点不匹配明确报错；原子写）
+// 提供 /session-delete/api/{delete,status}：
+//   delete 永久删除单个会话（官方 API 组合：detachSession + requireState/setState
+//          + locate/rm；路径围栏 + 回环围栏 + 运行中 409）
+//   status 只读诊断：目标 bundle 是否残留旧版 sidebar 补丁标记 + 文件指纹
+//
+// 本插件不再向 Harness 写入任何文件：没有 apply-patch 端点，没有自动重打，
+// 没有页面自动刷新。删除是唯一会产生副作用的操作，且必须由用户显式确认。
 //
 // 删除语义参考 Zephyr-vibe/dsh-archived-sessions（MIT）的实现模式，产品形态自研。
 import { createHash } from "node:crypto";
 import { readdir, rm } from "node:fs/promises";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { homedir } from "node:os";
-import {
-  applyPatchText,
-  checkPatch,
-  defaultTarget,
-  readTarget,
-  regionStatus,
-  writeTargetAtomic,
-} from "./scripts/patch-workspace-menu.mjs";
+import { checkPatch, defaultTarget, patchState, readTarget } from "./scripts/patch-workspace-menu.mjs";
 
 export const name = "plugin-session-delete";
 export const inject = ["webServer", "sessions", "sessionPersistence", "workspaceRegistry", "agents"];
@@ -66,17 +61,90 @@ export function isValidSessionId(id) {
   return /^[A-Za-z0-9_~-]{1,200}$/.test(id);
 }
 
-/** 定位会话 header（live 优先，其次 persistence.list()）。 */
-async function findSessionMeta(ctx, sessionId) {
-  const live = ctx.get("sessions")?.get(sessionId);
-  if (live !== undefined) return live.header;
-  const persistence = ctx.get("sessionPersistence");
-  if (persistence !== undefined && typeof persistence.list === "function") {
-    for (const meta of await persistence.list()) {
-      if (meta.id === sessionId) return meta;
+/** 定位会话 header（live 优先，其次 persistence.list()）。
+ *
+ * 实测（2026-09-27）本机会话 id 存在**两种拼写**：老会话是裸 uuid
+ * （`067f262c-…`），新会话是 `session-<uuid>`；客户端界面显示的是后者。
+ * 因此这里不做精确匹配，而是依次尝试：
+ *   1) live sessions.get(原样) → get(session- 前缀变体) → get(去前缀变体)
+ *   2) persistence.list() 里原样精确匹配
+ *   3) 兜底：两边都做"uuid 尾段"匹配（大小写不敏感，两种前缀写法都认）
+ * 这样 id 写法的漂移不会再表现为"会话不存在"。
+ */
+export async function findSessionMeta(ctx, sessionId) {
+  const variants = sessionIdVariants(sessionId);
+  const sessions = ctx.get("sessions");
+  for (const variant of variants) {
+    const live = sessions?.get(variant);
+    if (live !== undefined) return live.header;
+  }
+  const stored = await listStoredHeaders(ctx);
+  for (const meta of stored) {
+    if (meta.id === sessionId) return meta;
+  }
+  const wanted = sessionUuidTail(sessionId);
+  if (wanted !== undefined) {
+    for (const meta of stored) {
+      if (sessionUuidTail(meta.id) === wanted) return meta;
     }
   }
   return undefined;
+}
+
+/**
+ * 读回所有已存储会话的 header。
+ *
+ * 实测（2026-09-27，DSH 0.1.7-rc.2）：`persistence.list()` 返回的是**快照对象**
+ * `{ header, revision, sizeBytes }`，会话 id 在 `snapshot.header.id` 上，**不在**
+ * 顶层 `snapshot.id`。旧代码按 `meta.id` 取，永远拿到 undefined，于是任何不在
+ * 内存里的会话都会被误判成"不存在"。这里统一拆包，并且两种形状都兼容。
+ */
+async function listStoredHeaders(ctx) {
+  const persistence = ctx.get("sessionPersistence");
+  if (persistence === undefined || typeof persistence.list !== "function") return [];
+  const raw = await persistence.list();
+  const headers = [];
+  for (const entry of raw ?? []) {
+    const header = entry?.header ?? entry;
+    if (header !== undefined && header !== null && typeof header.id === "string") headers.push(header);
+  }
+  return headers;
+}
+
+/** 取 id 里的 uuid 尾段（小写）；拿不到时返回 undefined。 */
+export function sessionUuidTail(id) {
+  if (typeof id !== "string") return undefined;
+  return /([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})$/.exec(id)?.[1]?.toLowerCase();
+}
+
+/**
+ * 诊断：这个 id 在 host 侧到底能不能被认出来、库里的 id 长什么样。
+ * 只读，永不写入；用于排查"客户端显示有、服务端说没有"这类拼写漂移。
+ */
+async function idDiagnostics(ctx, sessionId, isValid) {
+  const sessions = ctx.get("sessions");
+  const liveIds = (sessions?.list() ?? []).map((session) => session.id);
+  const storedHeaders = await listStoredHeaders(ctx);
+  const storedIds = storedHeaders.map((header) => header.id);
+  const variants = sessionIdVariants(sessionId);
+  const liveHits = {};
+  for (const variant of variants) liveHits[variant] = sessions?.get(variant) !== undefined;
+  const exactStored = storedIds.includes(sessionId);
+  const tail = sessionUuidTail(sessionId);
+  return {
+    received: { sessionId: typeof sessionId === "string" ? sessionId : null, valid: isValid, length: typeof sessionId === "string" ? sessionId.length : null },
+    variants,
+    liveHitByVariant: liveHits,
+    storedExactMatch: exactStored,
+    storedTailMatch: tail === undefined ? null : storedIds.filter((id) => sessionUuidTail(id) === tail),
+    resolvedBy: (await findSessionMeta(ctx, sessionId)) === undefined ? null : "findSessionMeta",
+    liveIdSample: liveIds.slice(0, 8),
+    liveIdCount: liveIds.length,
+    storedIdSample: storedIds.slice(0, 8),
+    storedIdCount: storedIds.length,
+    hasPrefixInLive: liveIds.some((id) => String(id).startsWith("session-")),
+    hasPrefixInStored: storedIds.some((id) => String(id).startsWith("session-")),
+  };
 }
 
 // ── 浏览器信任围栏（仅本机回环）───────────────────────────────────────────
@@ -367,26 +435,49 @@ async function deleteSession(ctx, sessionId) {
   return { sessionId };
 }
 
-// ── 补丁状态 ───────────────────────────────────────────────────────────────
+// ── 只读诊断（绝不写入）────────────────────────────────────────────────────
+//
+// 本插件不再需要任何 bundle 补丁；此处只回答一个问题：这台机器的 client
+// bundle 上是否还残留旧版（<= 0.1.1）sidebar 补丁的标记。残留标记不会被本
+// 插件使用，但它属于一次已被淘汰的改写，值得让用户知道并能手动摘除。
 function patchStatus() {
   const path = defaultTarget();
   const content = readTarget(path);
   if (content === null) {
-    return { patched: false, path, error: "target not found" };
+    return { targetFound: false, stalePatch: false, regions: [], defects: [], path };
   }
+  const state = patchState(content);
   return {
+    targetFound: true,
     patched: checkPatch(content),
+    stalePatch: state.stale,
+    regions: state.regions,
+    defects: state.defects,
+    staleDetail: state.detail,
     path,
     fileHash: createHash("sha256").update(content).digest("hex"),
-    regions: regionStatus(content),
   };
 }
 
 // ── 路由 ───────────────────────────────────────────────────────────────────
-const API_METHODS = new Set(["delete", "status", "apply-patch"]);
-let applyInFlight = false;
+const API_METHODS = new Set(["delete", "status", "diagnose"]);
 
 export function apply(ctx) {
+  // 启动时打一行只读的 id 形态自检，便于在 dsh 终端里直接看到拼写/形状漂移。
+  void (async () => {
+    try {
+      const sessions = ctx.get("sessions");
+      const stored = await listStoredHeaders(ctx);
+      const liveIds = (sessions?.list() ?? []).map((s) => s.id);
+      console.log(
+        `[plugin-session-delete] id 自检：live=${liveIds.length} stored=${stored.length} ` +
+          `live样例=${JSON.stringify(liveIds.slice(0, 2))} stored样例=${JSON.stringify(stored.slice(0, 2).map((h) => h.id))}`,
+      );
+    } catch (error) {
+      console.warn(`[plugin-session-delete] id 自检失败：${error instanceof Error ? error.message : String(error)}`);
+    }
+  })();
+
   ctx.effect(() => ctx.webServer.register({
     kind: "prefix",
     path: "/session-delete/api",
@@ -405,7 +496,11 @@ export function apply(ctx) {
         sendFail(res, 404, "not-found", `unknown session-delete API method "${method}"`);
         return;
       }
-      if (method === "status" && (req.method === "GET" || req.method === "HEAD")) {
+      if (method === "status") {
+        if (req.method !== "GET" && req.method !== "HEAD") {
+          sendFail(res, 405, "method-error", "status is read-only; use GET");
+          return;
+        }
         sendOk(res, patchStatus());
         return;
       }
@@ -414,46 +509,17 @@ export function apply(ctx) {
         return;
       }
       try {
-        if (method === "status") {
-          sendOk(res, patchStatus());
-          return;
-        }
-        if (method === "apply-patch") {
-          if (applyInFlight) {
-            sendFail(res, 409, "busy", "another patch operation is in progress");
-            return;
-          }
-          applyInFlight = true;
-          try {
-            const path = defaultTarget();
-            const content = readTarget(path);
-            if (content === null) throw Object.assign(new Error("patch target not found"), { status: 404, code: "target-not-found" });
-            const { content: next, applied } = applyPatchText(content);
-            if (!applied) {
-              sendOk(res, { applied: false, already: true, path });
-              return;
-            }
-            writeTargetAtomic(path, next);
-            sendOk(res, { applied: true, path });
-          } catch (error) {
-            const { status, code, message } = httpError(error, 500);
-            sendFail(res, status, code, message);
-          } finally {
-            applyInFlight = false;
-          }
-          return;
-        }
         const payload = await readJsonBody(req);
         const sessionId = payload.sessionId;
+        if (method === "diagnose") {
+          sendOk(res, await idDiagnostics(ctx, sessionId, isValidSessionId(sessionId)));
+          return;
+        }
         if (!isValidSessionId(sessionId)) {
           sendFail(res, 400, "bad-request", "sessionId must be a UUID-shaped string");
           return;
         }
-        if (method === "delete") {
-          sendOk(res, await deleteSession(ctx, sessionId));
-          return;
-        }
-        sendFail(res, 404, "not-found", `unknown session-delete API method "${method}"`);
+        sendOk(res, await deleteSession(ctx, sessionId));
       } catch (error) {
         const { status, code, message } = httpError(error, 500);
         sendFail(res, status, code, message);
