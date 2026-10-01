@@ -60,7 +60,18 @@ window.__ModuleLoader__.load({
         ? primitives.IconTrashOutlineRegular
         : null;
 
-    /** 自带兜底：与官方描边风格一致的垃圾桶。 */
+    // 官方 `IconTrashOutlineArtwork` 的 16 格几何（dsh-client-ui-primitives
+    // lib/index.js:1143-1174 原样誊写）。DSH 全部图标共用 `0 0 16 16` 视框：
+    // 菜单项里的官方垃圾桶是 regular（1px）描边，设置导航用的是 medium（1.3）。
+    const TRASH_OUTLINE_PATHS = [
+      "M1.28149 3.88831H14.7187",
+      "M5.41602 3.88833V2.47962C5.41602 2.29282 5.52492 2.11366 5.71876 1.98157C5.9126 1.84948 6.17551 1.77527 6.44964 1.77527H9.55053C9.82466 1.77527 10.0876 1.84948 10.2814 1.98157C10.4753 2.11366 10.5842 2.29282 10.5842 2.47962V3.88833",
+      "M2.57349 3.88831L3.19366 13.2943C3.21937 13.5502 3.33952 13.7872 3.53065 13.9593C3.72178 14.1313 3.97016 14.2259 4.22729 14.2246H11.7728C12.0299 14.2259 12.2783 14.1313 12.4694 13.9593C12.6605 13.7872 12.7807 13.5502 12.8064 13.2943L13.4266 3.88831",
+      "M6.44946 6.98926V11.1238",
+      "M9.55054 6.98926V11.1238",
+    ];
+
+    /** 自带兜底：与官方 regular（1px）描边同几何的垃圾桶。 */
     function FallbackTrashIcon(props) {
       const size = props && props.size !== undefined ? props.size : 16;
       return e(
@@ -68,19 +79,12 @@ window.__ModuleLoader__.load({
         {
           width: size,
           height: size,
-          viewBox: "0 0 24 24",
+          viewBox: "0 0 16 16",
           fill: "none",
-          stroke: "currentColor",
-          strokeWidth: 1.6,
-          strokeLinecap: "round",
-          strokeLinejoin: "round",
+          strokeWidth: 1,
           "aria-hidden": "true",
         },
-        e("path", { d: "M3 6h18" }),
-        e("path", { d: "M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6" }),
-        e("path", { d: "M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" }),
-        e("path", { d: "M10 11v6" }),
-        e("path", { d: "M14 11v6" }),
+        TRASH_OUTLINE_PATHS.map((d, index) => e("path", { key: index, d, stroke: "currentColor" })),
       );
     }
 
@@ -762,20 +766,26 @@ window.__ModuleLoader__.load({
       //
       // 原因：`settings.section` 的公开契约**没有 icon 字段**，设置壳只投影
       // `id`/`order`/`label`，图标由一个硬编码白名单按分区 id 决定：
-      //   dsh-client-ui-settings-general/lib/client.js:239-265
+      //   dsh-client-ui-settings-general/lib/client.js:243-269
       //     /** Nav glyph by section id; unknown ids fall back to the settings gear. */
       // 我们的 id 不在名单里 → 吃默认齿轮。所以只能等它渲染出来后按 DOM 换掉
       // （dsh-better-sidebar 也是这么做的，见其 client.js:16092-16133）。
+      //
+      // 0.2.1 修正（0.2.0 实机踩过）：真实 DOM 里图标**就是按钮的第一个子节点**
+      // （`button > svg.navIcon + span.navLabel`，0.1.7-rc.2 起就是如此），没有外层
+      // 包装元素。0.2.0 按"包装元素里的第一个 svg"去找，把 svg 内部的**第一条
+      // path**（齿轮内圆）当成了齿轮，替换成一只无尺寸的嵌套 svg → 设置页那一行
+      // 显示成"齿轮残线 + 被裁切的垃圾桶碎片"。现在按真实结构**整只替换**图标节点。
       //
       // 安全约定：
       //   1) 只认**我们自己的标签文本**，不认齿轮的样子——否则会把别人分区的图标
       //      一起端掉；
       //   2) 替换后打 `data-session-delete-nav-icon`，避免 MutationObserver 自激循环；
-      //   3) 用 ctx.effect 持有 observer，插件卸载时自动断开。
+      //   3) 用 ctx.effect 持有 observer，插件卸载时自动断开并原位还原。
       ctx.effect(() => observeSettingsNavIcon(() => t("nav")), "session-delete: settings nav icon");
     }
 
-    /** 把设置导航里我们自己那一行的齿轮换成垃圾桶（幂等、可卸载）。 */
+    /** 把设置导航里我们自己那一行的图标（默认齿轮）换成垃圾桶（幂等、可卸载）。 */
     function observeSettingsNavIcon(resolveLabel) {
       // 运行环境必须真的有这三样才动 DOM：单元测试用的极简 document 替身没有
       // querySelectorAll，真实浏览器三者都在。缺了就安静跳过，绝不抛错。
@@ -789,6 +799,8 @@ window.__ModuleLoader__.load({
       }
       const MARK = "data-session-delete-nav-icon";
       const ORIGINAL = "data-session-delete-nav-original";
+      /** 替换物 → 被换下的原始图标节点（卸载时原位换回，不靠字符串重解析）。 */
+      const originals = new Map();
       let disposed = false;
       const sync = () => {
         if (disposed) return;
@@ -800,15 +812,14 @@ window.__ModuleLoader__.load({
             const button = span.parentElement;
             if (button === null || button === undefined) continue;
             if (button.querySelector(`[${MARK}]`) !== null) continue;
-            const wrapper = button.firstElementChild;
-            if (wrapper === null || wrapper === undefined) continue;
-            const gear = wrapper.firstElementChild;
-            if (gear === null || gear === undefined) continue;
-            const replacement = buildTrashSvg(gear);
+            const icon = resolveNavIconRoot(button);
+            if (icon === null) continue;
+            const replacement = buildTrashSvg(icon);
             if (replacement === null) continue;
             replacement.setAttribute(MARK, "");
-            replacement.setAttribute(ORIGINAL, gear.outerHTML ?? "");
-            gear.replaceWith(replacement);
+            replacement.setAttribute(ORIGINAL, icon.outerHTML ?? "");
+            originals.set(replacement, icon);
+            icon.replaceWith(replacement);
           }
         }
       };
@@ -819,41 +830,72 @@ window.__ModuleLoader__.load({
       return () => {
         disposed = true;
         observer.disconnect();
-        // 卸载时还原成原图标，避免留下无人认领的 DOM 改动。
+        // 卸载时把原图标**原位**换回去。注意不能再用 `parent.innerHTML = ...`：
+        // 替换物现在是按钮的直接子节点，重写父节点会把"删除会话"标签一起抹掉。
         for (const node of document.querySelectorAll(`[${MARK}]`)) {
-          const original = node.getAttribute(ORIGINAL);
-          if (original === null || node.parentElement === null) continue;
-          node.parentElement.innerHTML = original;
+          if (node.parentElement === null) continue;
+          const held = originals.get(node);
+          if (held !== undefined) {
+            node.replaceWith(held);
+            originals.delete(node);
+            continue;
+          }
+          // 兜底：别的实例留下的置换（例如热重载丢了自己的 Map）——按留档还原。
+          const restored = parseIconHtml(node.getAttribute(ORIGINAL));
+          if (restored !== null) node.replaceWith(restored);
         }
+        originals.clear();
       };
     }
 
-    /** 克隆齿轮 SVG 的几何属性，画一颗同尺寸的官方风格垃圾桶（不引入新依赖）。 */
+    /** 设置导航行的图标根节点。真实结构是 `button > svg + span.navLabel`（图标就是
+     *  按钮的第一个子元素，从 0.1.7-rc.2 起没有外层包装）。保留一层包装探测，
+     *  万一上游又包回去也不会再认错。 */
+    function resolveNavIconRoot(button) {
+      const first = button.firstElementChild;
+      if (first === null || first === undefined) return null;
+      if (isSvgElement(first)) return first;
+      const inner = first.firstElementChild;
+      if (inner !== null && inner !== undefined && isSvgElement(inner)) return inner;
+      return null;
+    }
+
+    function isSvgElement(node) {
+      return typeof node.tagName === "string" && node.tagName.toLowerCase() === "svg";
+    }
+
+    /** 把留档的 outerHTML 重新解析成节点（仅用于卸载兜底还原）。 */
+    function parseIconHtml(html) {
+      if (html === null || html === undefined || typeof document === "undefined") return null;
+      if (typeof document.createElement !== "function") return null;
+      const holder = document.createElement("div");
+      holder.innerHTML = html;
+      return holder.firstElementChild ?? null;
+    }
+
+    /** 克隆源图标的外观（宽高 / class / 描边宽度），画一颗与官方
+     *  `IconTrashOutlineRegular` 同一 16 格几何的垃圾桶——几何来自上面的常量，
+     *  不再从源元素里找。 */
     function buildTrashSvg(source) {
       if (source === null || source === undefined || typeof document === "undefined") return null;
       const NS_SVG = "http://www.w3.org/2000/svg";
       const svg = document.createElementNS(NS_SVG, "svg");
-      for (const attr of ["width", "height", "viewBox"]) {
-        const value = source.getAttribute?.(attr);
-        if (typeof value === "string" && value !== "") svg.setAttribute(attr, value);
-      }
-      const className = source.getAttribute?.("class");
-      if (typeof className === "string" && className !== "") svg.setAttribute("class", className);
+      const copy = (name, fallback) => {
+        const value = typeof source.getAttribute === "function" ? source.getAttribute(name) : null;
+        if (typeof value === "string" && value !== "") svg.setAttribute(name, value);
+        else if (fallback !== undefined) svg.setAttribute(name, fallback);
+      };
+      copy("width", "16");
+      copy("height", "16");
+      copy("class");
+      copy("stroke-width", "1.3");
+      svg.setAttribute("viewBox", "0 0 16 16");
       svg.setAttribute("fill", "none");
-      svg.setAttribute("stroke", "currentColor");
-      svg.setAttribute("stroke-width", "1.6");
-      svg.setAttribute("stroke-linecap", "round");
-      svg.setAttribute("stroke-linejoin", "round");
       svg.setAttribute("aria-hidden", "true");
-      for (const d of [
-        "M3 6h18",
-        "M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6",
-        "M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2",
-        "M10 11v6",
-        "M14 11v6",
-      ]) {
+      for (const d of TRASH_OUTLINE_PATHS) {
         const path = document.createElementNS(NS_SVG, "path");
         path.setAttribute("d", d);
+        path.setAttribute("stroke", "currentColor");
         svg.appendChild(path);
       }
       return svg;

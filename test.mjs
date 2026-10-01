@@ -281,8 +281,8 @@ test("findSessionMeta: id 拼写漂移不再表现为「会话不存在」", asy
 /**
  * 最小 DOM 替身，专门用来验证"设置导航换图标"：
  * 不引第三方依赖（本机没装 jsdom），只实现那段代码真正用到的 API。
- * 结构复刻 dsh-client-ui-settings-general 渲染出的设置弹层：
- *   body > div[role=dialog] > nav > button > [span.navIcon > svg], span.navLabel
+ * 结构复刻 dsh-client-ui-settings-general 渲染出的设置弹层（真实结构）：
+ *   body > div[role=dialog] > nav > button > [svg.navIcon, span.navLabel]
  */
 class FakeEl {
   constructor(tag) {
@@ -336,7 +336,11 @@ class FakeEl {
   }
 }
 
-/** 造一个设置弹层：两行导航（我们那一行 + 别的分区一行）。 */
+/** 造一个设置弹层：两行导航（我们那一行 + 别的分区一行）。
+ *  结构按**真实 DOM**：`body > div[role=dialog] > nav > button > [svg.navIcon, span.navLabel]`
+ *  ——图标就是按钮的第一个子节点（SettingsPanel 渲染 `children: [navIcon(row.id),
+ *  span.navLabel]`，primitives 的图标组件直接渲染 `<svg>`；0.1.7-rc.2 起即是如此，
+ *  没有外层包装元素）。旧夹具包了一层不存在的 span，正是设置图标 bug 漏网的原因。 */
 function buildSettingsDom(ourLabel) {
   const observers = [];
   const body = new FakeEl("body");
@@ -349,21 +353,20 @@ function buildSettingsDom(ourLabel) {
   const makeRow = (labelText) => {
     const button = new FakeEl("button");
     nav.appendChild(button);
-    const iconWrap = new FakeEl("span");
-    iconWrap.setAttribute("class", "navIcon");
     const gear = new FakeEl("svg");
     gear.setAttribute("width", "16");
     gear.setAttribute("height", "16");
-    gear.setAttribute("viewBox", "0 0 24 24");
-    gear.setAttribute("class", "gearClass");
+    gear.setAttribute("viewBox", "0 0 16 16");
+    gear.setAttribute("class", "navIconClass");
+    gear.setAttribute("stroke-width", "1.3");
     gear.appendChild(new FakeEl("path"));
-    iconWrap.appendChild(gear);
-    button.appendChild(iconWrap);
+    gear.appendChild(new FakeEl("path"));
+    button.appendChild(gear);
     const label = new FakeEl("span");
     label.setAttribute("class", "navLabel");
     label.textContent = labelText;
     button.appendChild(label);
-    return { button, gear };
+    return { button, gear, label };
   };
 
   const ours = makeRow(ourLabel);
@@ -388,7 +391,10 @@ function buildSettingsDom(ourLabel) {
     document: documentStub,
     MutationObserver: FakeMutationObserver,
     observerCount: () => observers.length,
+    trigger: () => { for (const observer of observers) observer.callback(); },
     button: ours.button,
+    gear: ours.gear,
+    label: ours.label,
     otherGear: other.gear,
   };
 }
@@ -692,11 +698,15 @@ test("client: 拿不到官方图标时退回自带垃圾桶，绝不因 require 
   assert.equal(types.includes("OfficialTrashIcon"), false, "官方图标不可用时不得出现官方图标节点");
 });
 
-test("client: 设置导航那一行会被换成垃圾桶图标（且不碰别人）", () => {  // 契约事实（dsh-client-ui-settings-general/lib/client.js:239-265）：
+test("client: 设置导航那一行会被换成垃圾桶图标（且不碰别人）", () => {
+  // 契约事实（dsh-client-ui-settings-general/lib/client.js:243-269）：
   //   /** Nav glyph by section id; unknown ids fall back to the settings gear. */
   // 分区图标来自**硬编码白名单**，注册项没有 icon 字段，我们的 id 会吃默认齿轮。
   // 所以客户端必须自己在设置弹层挂载后，按标签文本找到自己那一行再换图标。
-  // 之前这条路径**没有测试覆盖**（极简 document 替身会让它整体跳过）。
+  //
+  // 结构事实（0.2.0 实机踩过）：真实 DOM 是 `button > svg.navIcon + span.navLabel`，
+  // 图标**就是**按钮的第一个子节点；旧夹具模拟了一个不存在的包装层，放过了"把图标
+  // 内部第一条 path 换成嵌套 svg"的坏形状。这里按真实结构造夹具。
   const dom = buildSettingsDom("删除会话");
   const React = fakeReact();
   // MutationObserver 在模块里是自由变量（不是注入形参），测试临时挂到 globalThis
@@ -710,19 +720,62 @@ test("client: 设置导航那一行会被换成垃圾桶图标（且不碰别人
     if (previousObserver === undefined) delete globalThis.MutationObserver;
     else globalThis.MutationObserver = previousObserver;
   }
-  const replaced = dom.button.firstElementChild.firstElementChild;
-  assert.equal(replaced.tagName, "svg", "齿轮必须被换成一个 svg");
+  const replaced = dom.button.firstElementChild;
+  assert.equal(replaced.tagName, "svg", "图标必须整只被换成一个 svg");
+  assert.notEqual(replaced, dom.gear, "替换物不是原来的齿轮节点");
   assert.ok(replaced.getAttribute("data-session-delete-nav-icon") !== null, "替换物必须打标记（防自激循环）");
   assert.equal(replaced.getAttribute("width"), "16", "保留原尺寸");
-  assert.equal(replaced.getAttribute("viewBox"), "0 0 24 24", "保留原视框");
+  assert.equal(replaced.getAttribute("height"), "16", "保留原尺寸");
+  assert.equal(replaced.getAttribute("class"), "navIconClass", "保留原 class（navIcon 的 flex:none 等样式）");
+  assert.equal(replaced.getAttribute("viewBox"), "0 0 16 16", "与官方图标同一 16 格视框");
+  assert.equal(replaced.getAttribute("stroke-width"), "1.3", "沿用导航图标的 medium 描边");
   assert.equal(replaced.children.length, 5, "垃圾桶由 5 条 path 组成");
-  assert.equal(replaced.getAttribute("stroke"), "currentColor", "跟随主题文字色");
-  assert.equal(
-    dom.otherGear.getAttribute("data-session-delete-nav-icon"),
-    null,
-    "别的分区（外观）的图标绝不能被改",
-  );
+  assert.equal(replaced.querySelector("svg"), null, "替换物内部不得有嵌套 svg（0.2.0 的坏形状回归）");
+  for (const path of replaced.children) {
+    assert.equal(path.getAttribute("stroke"), "currentColor", "跟随主题文字色");
+  }
+  assert.equal(dom.button.children.includes(dom.gear), false, "原齿轮节点必须被整只移除");
+  assert.equal(dom.gear.children.length, 2, "原齿轮的内部结构不得被改动（旧代码会换掉第一条 path）");
+  assert.equal(dom.gear.getAttribute("data-session-delete-nav-icon"), null, "标记只能打在替换物上");
+  assert.equal(dom.button.children[1], dom.label, "标签 span 必须原位保留");
+  assert.equal(dom.button.children.length, 2, "导航行只应有 [图标, 标签] 两部分");
+  assert.equal(dom.otherGear.getAttribute("data-session-delete-nav-icon"), null, "别的分区（外观）的图标绝不能被改");
+  assert.equal(dom.otherGear.children.length, 2, "别的分区的图标内容不动");
   assert.ok(dom.observerCount() >= 1, "必须挂 MutationObserver 才能等到弹层挂载");
+
+  // 幂等：再来一轮同步不应再动任何节点。
+  dom.trigger();
+  assert.equal(dom.button.children.length, 2);
+  assert.equal(dom.button.firstElementChild, replaced, "已打标记的替换物不应被二次替换");
+  assert.equal(dom.otherGear.getAttribute("data-session-delete-nav-icon"), null);
+});
+
+test("client: 卸载后原图标原位还原，标签不受影响", () => {
+  const dom = buildSettingsDom("删除会话");
+  const React = fakeReact();
+  const previousObserver = globalThis.MutationObserver;
+  globalThis.MutationObserver = dom.MutationObserver;
+  const disposers = [];
+  try {
+    const { result } = loadClientModule({ React, document: dom.document, MutationObserver: dom.MutationObserver });
+    const { ctx } = makeApplyContext();
+    const originalEffect = ctx.effect;
+    ctx.effect = (factory) => {
+      const dispose = factory();
+      if (typeof dispose === "function") disposers.push(dispose);
+    };
+    result.apply(ctx);
+    ctx.effect = originalEffect;
+  } finally {
+    if (previousObserver === undefined) delete globalThis.MutationObserver;
+    else globalThis.MutationObserver = previousObserver;
+  }
+  assert.notEqual(dom.button.firstElementChild, dom.gear, "前置条件：图标已被替换");
+  for (const dispose of disposers) dispose();
+  assert.equal(dom.button.firstElementChild, dom.gear, "卸载后原图标必须原位还原");
+  assert.equal(dom.button.children[1], dom.label, "标签 span 必须还在（不得重写父节点 innerHTML）");
+  assert.equal(dom.button.children.length, 2, "导航行恢复为 [图标, 标签]");
+  assert.equal(dom.button.querySelector("[data-session-delete-nav-icon]"), null, "替换物及其标记必须清空");
 });
 
 test("client: 源码里不存在任何打补丁 / 自动刷新 / apply-patch 的痕迹", () => {
